@@ -3,14 +3,16 @@ import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Any
+from tqdm import tqdm
 
 
-def get_avg_review_count(user_id):
+def load_user_data(user_id):
+    """Load and merge data for a specific user from the dataset."""
     try:
         filters = [("user_id", "=", user_id)]
-        df_revlogs = pd.read_parquet(f"../anki-revlogs-10k/revlogs", filters=filters)
 
-        # Check if dataframe is empty
+        # Load revlogs
+        df_revlogs = pd.read_parquet(f"../anki-revlogs-10k/revlogs", filters=filters)
         if df_revlogs.empty:
             print(f"No data found for user {user_id}")
             return None
@@ -23,6 +25,7 @@ def get_avg_review_count(user_id):
         # user_id is not needed
         del df_revlogs["user_id"]
 
+        # Load cards
         df_cards = pd.read_parquet("../anki-revlogs-10k/cards", filters=filters)
         if df_cards.empty:
             print(f"No card data found for user {user_id}")
@@ -30,6 +33,7 @@ def get_avg_review_count(user_id):
 
         del df_cards["user_id"]
 
+        # Load decks
         df_decks = pd.read_parquet("../anki-revlogs-10k/decks", filters=filters)
         if df_decks.empty:
             print(f"No deck data found for user {user_id}")
@@ -47,27 +51,39 @@ def get_avg_review_count(user_id):
             print(f"No joined data found for user {user_id}")
             return None
 
-        avg_review_count_per_note = df_join["note_id"].value_counts().mean().item()
-        avg_review_count_per_card = df_join["card_id"].value_counts().mean().item()
+        return df_join
+    except Exception as e:
+        print(f"Error loading data for user {user_id}: {str(e)}")
+        return None
 
-        ratio = avg_review_count_per_note / avg_review_count_per_card
 
-        # Round to 2 decimal places
-        avg_review_count_per_note_rounded = round(float(avg_review_count_per_note), 2)
-        avg_review_count_per_card_rounded = round(float(avg_review_count_per_card), 2)
-        ratio_rounded = round(float(ratio), 2)
+def get_avg_review_count(user_id):
+    try:
+        # Load and join data for this user
+        df_join = load_user_data(user_id)
+        if df_join is None:
+            return None
+
+        # Get the number of revlogs for this user
+        revlogs_count = df_join.shape[0]
+
+        card_count = df_join["card_id"].nunique()
+        note_count = df_join["note_id"].nunique()
+        avg_review_count_per_note = (
+            df_join["note_id"].value_counts().mean().round(2).item()
+        )
+        avg_review_count_per_card = (
+            df_join["card_id"].value_counts().mean().round(2).item()
+        )
 
         result = {
             "user_id": user_id,
             "revlogs_count": revlogs_count,
-            "avg_review_count_per_note": avg_review_count_per_note_rounded,
-            "avg_review_count_per_card": avg_review_count_per_card_rounded,
-            "ratio": ratio_rounded,
+            "card_count": card_count,
+            "note_count": note_count,
+            "avg_review_count_per_note": avg_review_count_per_note,
+            "avg_review_count_per_card": avg_review_count_per_card,
         }
-
-        print(
-            f"User {user_id}: Revlogs: {revlogs_count}, Average review count per note: {avg_review_count_per_note_rounded}, per card: {avg_review_count_per_card_rounded}, ratio: {ratio_rounded}"
-        )
 
         return result
     except Exception as e:
@@ -90,9 +106,16 @@ def process_users(user_ids, output_file="results.jsonl", max_workers=None):
         exist_ok=True,
     )
 
-    # Process users in parallel
+    # Process users in parallel with progress bar
+    print(f"Processing {len(user_ids)} users...")
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        results = list(executor.map(get_avg_review_count, user_ids))
+        results = list(
+            tqdm(
+                executor.map(get_avg_review_count, user_ids),
+                total=len(user_ids),
+                desc="Processing users",
+            )
+        )
 
     # Filter out None results (failed processing)
     results = [r for r in results if r is not None]
@@ -106,7 +129,8 @@ def process_users(user_ids, output_file="results.jsonl", max_workers=None):
     return results
 
 
-# Example usage: process users 1 to 10
-user_ids = list(range(1, 10001))
+if __name__ == "__main__":
+    # Example usage: process users 1 to 10
+    user_ids = list(range(1, 10001))
 
-process_users(user_ids, output_file="results.jsonl", max_workers=10)
+    process_users(user_ids, output_file="results.jsonl", max_workers=10)
