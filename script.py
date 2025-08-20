@@ -75,6 +75,12 @@ def get_avg_review_count(user_id):
         avg_review_count_per_card = (
             df_join["card_id"].value_counts().mean().round(2).item()
         )
+        retention_rate = round(
+            df_join[df_join["state"] == 2]["rating"]
+            .map({1: 0, 2: 1, 3: 1, 4: 1})
+            .mean(),
+            2,
+        )
 
         result = {
             "user_id": user_id,
@@ -83,6 +89,7 @@ def get_avg_review_count(user_id):
             "note_count": note_count,
             "avg_review_count_per_note": avg_review_count_per_note,
             "avg_review_count_per_card": avg_review_count_per_card,
+            "retention_rate": retention_rate,
         }
 
         return result
